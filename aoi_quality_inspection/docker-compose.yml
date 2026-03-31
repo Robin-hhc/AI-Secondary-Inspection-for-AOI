@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  # Web后端服务
+  web-backend:
+    build:
+      context: ./web_terminal/backend
+      dockerfile: Dockerfile
+    container_name: aoi-web-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    environment:
+      - FLASK_ENV=production
+      - DB_PATH=/app/data/aoi_system.db
+    restart: unless-stopped
+    networks:
+      - aoi-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 推理引擎服务
+  inference-engine:
+    build:
+      context: ./inference_engine
+      dockerfile: Dockerfile
+    container_name: aoi-inference-engine
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    restart: unless-stopped
+    networks:
+      - aoi-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # 图像采集服务
+  image-collector:
+    build:
+      context: ./image_collector
+      dockerfile: Dockerfile
+    container_name: aoi-image-collector
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - /mnt/aoi-share:/mnt/aoi-share:ro  # AOI共享目录
+    environment:
+      - WATCH_PATH=/mnt/aoi-share
+    restart: unless-stopped
+    networks:
+      - aoi-network
+    depends_on:
+      - inference-engine
+      - web-backend
+
+  # 主动学习服务
+  active-learning:
+    build:
+      context: ./active_learning
+      dockerfile: Dockerfile
+    container_name: aoi-active-learning
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    restart: unless-stopped
+    networks:
+      - aoi-network
+    depends_on:
+      - inference-engine
+      - web-backend
+
+  # 模型更新服务
+  model-updater:
+    build:
+      context: ./model_updater
+      dockerfile: Dockerfile
+    container_name: aoi-model-updater
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./config:/app/config
+    restart: unless-stopped
+    networks:
+      - aoi-network
+    depends_on:
+      - inference-engine
+
+networks:
+  aoi-network:
+    driver: bridge
+
+volumes:
+  data:
+  models:
+  logs:
